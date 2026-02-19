@@ -1,6 +1,6 @@
 # ERAP ONH FDG-PET Quantification Pipeline
 
-Automated extraction of [18F]FDG-PET uptake metrics from the optic nerve head (ONH) and retina in the **ERAP clinical trial**. 
+Automated extraction of [18F]FDG-PET uptake metrics from the optic nerve head (ONH) and retina in the **ERAP clinical trial** — a pilot study evaluating rapamycin treatment in early-stage Alzheimer's disease.
 
 ## Background
 
@@ -92,7 +92,7 @@ Raw imaging data are **not included** in this repository due to patient privacy 
 
 ## Development
 
-This pipeline was developed using [Claude Code](https://claude.ai/claude-code) (Anthropic) at the [Sigray Lab](https://ki.se/en/research/research-areas-centres-and-networks/research-groups/sigray-lab-pet-methodology), Department of Clinical Neuroscience, Karolinska Institutet.
+This pipeline was developed using Claude Code (Anthropic) and maintained by https://github.com/Sigray-Lab, Department of Clinical Neuroscience, Karolinska Institutet.
 
 ## References
 
