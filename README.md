@@ -1,6 +1,6 @@
 # ERAP ONH FDG-PET Quantification Pipeline
 
-Automated extraction of [18F]FDG-PET uptake metrics from the optic nerve head (ONH) in the **ERAP clinical trial** evaluating rapamycin treatment for retinal aging.
+Automated extraction of [18F]FDG-PET uptake metrics from the optic nerve head (ONH) and retina in the **ERAP clinical trial**. 
 
 ## Background
 
@@ -24,8 +24,6 @@ Each of three intensity measures is computed with four normalizations, yielding 
 |               | max | peak (2 mm) | top150 mean | top150 median | top150 p90 |
 |---------------|:---:|:-----------:|:-----------:|:-------------:|:----------:|
 | **SUV**       |  x  |      x      |      x      |       x       |     x      |
-| **SUVR**      |  x  |      x      |      x      |       x       |     x      |
-| **TPR**       |  x  |      x      |      x      |       x       |     x      |
 | **FUR**       |  x  |      x      |      x      |       x       |     x      |
 
 **Metric definitions:**
@@ -33,8 +31,6 @@ Each of three intensity measures is computed with four normalizations, yielding 
 | Metric | Formula | Description |
 |--------|---------|-------------|
 | SUV | PET × (weight / dose) | Standardized uptake value (body-weight normalized) |
-| SUVR | tissue / cerebellum | Ratio to cerebellum reference region |
-| TPR | tissue / plasma | Tissue-to-plasma ratio during scan |
 | FUR | tissue / AUC(input function) × 60 | Fractional uptake rate (min⁻¹) |
 
 ### Top-150 Rationale
@@ -94,7 +90,6 @@ Raw imaging data are **not included** in this repository due to patient privacy 
 | 150 = 2 resolution elements | Matches ~2× PET FWHM at ONH location for noise robustness |
 | 2 mm SUVpeak sphere | PERCIST-recommended fixed-size ROI, centered on max voxel |
 | FUR with midpoint AUC | Approximates metabolic rate without kinetic modeling; midpoint = ScanStart + Duration/2 |
-| Cerebellum SUVR | Controls for global uptake variability across sessions |
 | Blinded delineation | Masks drawn on blinded PET images to avoid bias |
 
 ## Development
@@ -108,4 +103,4 @@ This pipeline was developed using [Claude Code](https://claude.ai/claude-code) (
 
 ## License
 
-This project is part of the ERAP clinical trial. Raw imaging data are not included in this repository due to patient privacy regulations.
+This project is part of the ERAP clinical trial. Raw imaging data are not included in this repository. 
