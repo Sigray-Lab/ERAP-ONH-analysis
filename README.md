@@ -19,8 +19,6 @@ The ONH (optic disc) is the anatomical location where retinal ganglion cell axon
 
 ## Quantitative Metrics
 
-Each of three intensity measures is computed with four normalizations, yielding **20 metrics per eye**:
-
 |               | max | peak (2 mm) | top150 mean | top150 median | top150 p90 |
 |---------------|:---:|:-----------:|:-----------:|:-------------:|:----------:|
 | **SUV**       |  x  |      x      |      x      |       x       |     x      |
