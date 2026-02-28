@@ -190,6 +190,53 @@ def main():
                 'Significant': '*' if significant else ''
             })
 
+    # --- Bilateral analysis (average of left and right per subject) ---
+    numeric_cols = [col for col, _, _ in metrics]
+    left_data = df[df['eye'] == 'left']
+    right_data = df[df['eye'] == 'right']
+
+    for timepoint_label in ['Baseline', 'Followup']:
+        left_tp = left_data[left_data['session_unblinded'] == timepoint_label].set_index('subject_id')[numeric_cols]
+        right_tp = right_data[right_data['session_unblinded'] == timepoint_label].set_index('subject_id')[numeric_cols]
+        common = left_tp.index.intersection(right_tp.index)
+        if timepoint_label == 'Baseline':
+            bilateral_baseline = (left_tp.loc[common] + right_tp.loc[common]) / 2
+        else:
+            bilateral_followup = (left_tp.loc[common] + right_tp.loc[common]) / 2
+
+    bilateral_subjects = bilateral_baseline.index.intersection(bilateral_followup.index)
+    bilateral_base = bilateral_baseline.loc[bilateral_subjects]
+    bilateral_fup = bilateral_followup.loc[bilateral_subjects]
+
+    for col_name, outcome_label, decimals in metrics:
+        baseline_vals = bilateral_base[col_name].values
+        followup_vals = bilateral_fup[col_name].values
+
+        valid_mask = ~(np.isnan(baseline_vals) | np.isnan(followup_vals))
+        baseline_clean = baseline_vals[valid_mask]
+        followup_clean = followup_vals[valid_mask]
+
+        if len(baseline_clean) < 3:
+            continue
+
+        stats_result = paired_analysis(baseline_clean, followup_clean)
+        significant = stats_result['p_value'] < 0.05
+
+        results.append({
+            'Organ_system': 'ONH',
+            'Eye': 'Bilateral',
+            'Outcome': outcome_label,
+            'n': stats_result['n'],
+            'Baseline_(Mean_±_SD)': format_mean_sd(stats_result['baseline_mean'], stats_result['baseline_sd'], decimals),
+            'Follow-up_(Mean_±_SD)': format_mean_sd(stats_result['followup_mean'], stats_result['followup_sd'], decimals),
+            'Δ_(95%_CI)': format_delta_ci(stats_result['delta_mean'],
+                                           stats_result['delta_ci_low'],
+                                           stats_result['delta_ci_high'], decimals),
+            'Cohens_dz': f"{stats_result['cohens_dz']:.2f}",
+            'p': format_p_value(stats_result['p_value']),
+            'Significant': '*' if significant else ''
+        })
+
     # Create results dataframe
     results_df = pd.DataFrame(results)
 
