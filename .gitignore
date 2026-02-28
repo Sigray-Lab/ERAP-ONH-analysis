@@ -10,6 +10,7 @@ Outputs/
 # ----- Documentation (kept locally, not in repo) -----
 CLAUDE.md
 ONH_Pipeline_Methods.docx
+ONH_Manuscript_Methods_Results.md
 
 # ----- Python -----
 __pycache__/
