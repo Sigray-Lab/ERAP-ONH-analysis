@@ -40,3 +40,6 @@ build/
 *.bak
 *.log
 ~$*
+
+# ----- Adversarial review workspace (contains patient-image overlays) -----
+Review_adversarial/
