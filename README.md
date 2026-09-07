@@ -1,104 +1,82 @@
 # ERAP ONH FDG-PET Quantification Pipeline
 
-Automated extraction of [18F]FDG-PET uptake metrics from the optic nerve head (ONH) and retina in the **ERAP clinical trial** — a pilot study evaluating rapamycin treatment in early-stage Alzheimer's disease.
+Automated extraction of [18F]FDG-PET uptake metrics from the optic nerve head (ONH) in the **ERAP clinical trial**
+(pilot study of rapamycin in early Alzheimer's disease).
+
+**State:** revised after an adversarial technical review (2026-09-06); tag `v2-review-response` (the reviewed state is
+tag `v1-as-reviewed`). Response to the review: `REVIEW_RESPONSE.md`.
 
 ## Background
 
-The ONH (optic disc) is the anatomical location where retinal ganglion cell axons exit the eye. FDG-PET measures local glucose metabolism, and changes in ONH uptake may reflect treatment effects on retinal health.
+The ONH (optic disc) is where retinal ganglion cell axons leave the eye. FDG-PET measures local glucose metabolism.
+The anatomical ONH (~1.5-2 mm) is far smaller than the PET resolution (~5 mm FWHM at the ONH location), so the visible
+hotspot is dominated by partial-volume effects and mask means would be confounded by delineation size. The pipeline
+therefore reports fixed-count hottest-voxel statistics (Top-150), a single-voxel maximum and a small fixed-sphere peak.
 
-**The core challenge** is the mismatch between anatomical ONH size (~1.5–2 mm diameter) and PET scanner resolution (~5 mm FWHM at the ONH location). The visible PET "hotspot" is dominated by partial volume effects, and variable mask sizes would confound simple mean calculations. This pipeline therefore uses **resolution-robust metrics** that are independent of mask volume.
+## Pipeline
 
-## Pipeline Overview
+| Script | Role |
+|---|---|
+| `00_install_injection_corrected_pet.py` | One-off: installs injection-referenced PET images into `RawData/` (archives the frame-start-referenced originals; writes `RawData/pet_manifest.csv`) |
+| `extract_onh_metrics.py` | Discovers sessions, validates sidecars (decay reference, units, timing), loads PET and masks, assigns anatomical laterality, computes all metrics, structured QC, run manifest |
+| `utils.py` | I/O, validation, SUV/SUVR/TPR/FUR calculation, QC helpers |
+| `qc_visualizations.py` | One PNG per session (radiological display, R/L from the affine) |
+| `statistical_analysis.py` | Paired tests (t and Wilcoxon), Tables 1-2, ancillary numbers, rapamycin correlation, `README_outputs.md` |
+| `sensitivity_analysis.py` | Supplementary Table S1 (dose source, sub-110 follow-up sample times, ±1 mm mask change, IF bridging) |
 
-| Script | Description |
-|--------|-------------|
-| `extract_onh_metrics.py` | Main pipeline: discovers subjects, loads PET/masks, calculates all metrics, runs QC |
-| `utils.py` | Helper functions for file I/O, SUV/SUVR/TPR/FUR calculation, QC flag generation |
-| `qc_visualizations.py` | Generates visual QC images with mask contours, peak spheres, and max voxel markers |
-| `statistical_analysis.py` | Paired t-tests (Baseline vs Follow-up) with Cohen's dz effect sizes |
+Run order: `00_…` (once) → `extract_onh_metrics.py` → `statistical_analysis.py` → `sensitivity_analysis.py`.
 
-## Quantitative Metrics
+## Metrics
 
-|               | max | peak (2 mm) | top150 mean | top150 median | top150 p90 |
-|---------------|:---:|:-----------:|:-----------:|:-------------:|:----------:|
-| **SUV**       |  x  |      x      |      x      |       x       |     x      |
-| **FUR**       |  x  |      x      |      x      |       x       |     x      |
+Five intensity measures (max, 2 mm-radius peak sphere, Top-150 mean / median / p90) x four normalisations. SUV and FUR
+are the reported endpoints; SUVR and TPR are computed and available in the outputs.
 
-**Metric definitions:**
+| | max | peak (2 mm) | top150 mean | top150 median | top150 p90 |
+|---|:---:|:---:|:---:|:---:|:---:|
+| **SUV** (reported) | x | x | x | x | x |
+| **FUR** (reported) | x | x | x | x | x |
+| SUVR (cerebellum) | x | x | x | x | x |
+| TPR (plasma) | x | x | x | x | x |
 
-| Metric | Formula | Description |
-|--------|---------|-------------|
-| SUV | PET × (weight / dose) | Standardized uptake value (body-weight normalized) |
-| FUR | tissue / AUC(input function) × 60 | Fractional uptake rate (min⁻¹) |
+| Metric | Formula |
+|---|---|
+| SUV | C[Bq/mL] x weight[kg] / (dose[MBq] x 1000) |
+| SUVR | C / time-weighted cerebellum mean over the scan |
+| TPR | (C / 1000) / mean plasma [kBq/mL] over the scan |
+| FUR | C / AUC(0 to scan midpoint) of the input function x 60 [min⁻¹] |
 
-### Top-150 Rationale
+**Decay reference.** All activities (PET, blood, IDIF, cerebellum) are referenced to injection. The pipeline aborts if a
+PET sidecar declares another reference.
 
-The Top-150 metric extracts the mean, median, and 90th percentile from the 150 highest-intensity voxels within each mask. The number 150 is derived from scanner resolution:
+**Laterality.** The mask filenames carry the delineator's display-side label; the CSV column `eye` is the anatomical eye
+derived from the mask centroid in world coordinates (`mask_label_in_filename` keeps the file label).
 
-- **Scanner**: GE Discovery MI 5 PET/CT
-- **FWHM at ONH** (~75 mm from FOV center): ~5.2 mm
-- **1 resolution element**: (4/3)π(5.2/2)³ ≈ 74 mm³ ≈ 74 voxels (1 mm³ isotropic)
-- **2 resolution elements** ≈ 148 voxels → rounded to **150**
+**Top-150.** 150 voxels ≈ two resolution elements at the ONH (FWHM ~5.2 mm → 74 mm³ each). Hottest-N statistics are
+monotone in the mask support, so they depend weakly on delineation; the ±1 mm sensitivity is reported in the supplement.
 
-Since all masks contain ≥ 230 voxels, Top-150 is unbiased by mask size.
+**Peak sphere.** 2 mm radius (33 voxels) centred on the max voxel, chosen for the ONH size. It is not the PERCIST SULpeak.
 
-## Quick Start
-
-### Prerequisites
+## Quick start
 
 ```bash
 pip install nibabel numpy pandas scipy matplotlib
-```
-
-### Running the Pipeline
-
-```bash
 cd Scripts/
-python extract_onh_metrics.py       # Extracts all metrics
-python statistical_analysis.py      # Runs pre-post statistics
+python extract_onh_metrics.py
+python statistical_analysis.py
+python sensitivity_analysis.py
 ```
 
-## Data Requirements
+## Data requirements
 
-Raw imaging data are **not included** in this repository due to patient privacy regulations. The pipeline expects the following BIDS-like directory structure at the sibling level:
-
-```
-../RawData/
-├── sub-XXX/
-│   └── ses-XXXXX/
-│       └── pet/
-│           ├── *_pet.nii                   # FDG-PET image (Bq/mL)
-│           ├── *_left_ONH_mask.nii.gz      # Left eye mask (binary)
-│           └── *_right_ONH_mask.nii.gz     # Right eye mask (binary)
-├── eCRF_data/                              # Body weight, injected dose
-├── Cerebellum_tacs/                        # Reference region TACs
-├── BloodPlasma/                            # Manual plasma samples
-├── InputFunctions/                         # IDIF + plasma input functions
-└── json_side_cars_updated/                 # Corrected PET timing metadata
-
-../BlindKey/
-└── Blinding_key.csv                        # Session blinding key
-```
-
-## Key Design Decisions
-
-| Decision | Rationale |
-|----------|-----------|
-| Top-150 voxels (not SUVmean) | Mask sizes vary 3.5×; Top-150 is independent of mask volume |
-| 150 = 2 resolution elements | Matches ~2× PET FWHM at ONH location for noise robustness |
-| 2 mm SUVpeak sphere | PERCIST-recommended fixed-size ROI, centered on max voxel |
-| FUR with midpoint AUC | Approximates metabolic rate without kinetic modeling; midpoint = ScanStart + Duration/2 |
-| Blinded delineation | Masks drawn on blinded PET images to avoid bias |
+Raw data are not part of this repository (patient data). See `RawData_Requirements.md`. The expected layout is
+`../RawData/` and `../BlindKey/` relative to this folder.
 
 ## Development
 
-This pipeline was developed using Claude Code (Anthropic) and maintained by https://github.com/Sigray-Lab, Department of Clinical Neuroscience, Karolinska Institutet.
+Developed with Claude Code (Anthropic); maintained by https://github.com/Sigray-Lab, Department of Clinical
+Neuroscience, Karolinska Institutet.
 
 ## References
 
-1. Wahl RL, et al. From RECIST to PERCIST: Evolving Considerations for PET Response Criteria in Solid Tumors. *J Nucl Med*. 2009;50 Suppl 1:122S-150S.
-2. Patlak CS, Blasberg RG. Graphical evaluation of blood-to-brain transfer constants from multiple-time uptake data. *J Cereb Blood Flow Metab*. 1985;5(4):584-90.
-
-## License
-
-This project is part of the ERAP clinical trial. Raw imaging data are not included in this repository. 
+1. Wahl RL, et al. *J Nucl Med*. 2009;50 Suppl 1:122S-150S.
+2. Patlak CS, Blasberg RG. *J Cereb Blood Flow Metab*. 1985;5(4):584-90.

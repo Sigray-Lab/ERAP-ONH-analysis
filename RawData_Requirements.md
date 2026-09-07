@@ -1,200 +1,81 @@
 # Data Requirements
 
-Raw imaging and clinical data are **not included** in this repository due to patient privacy regulations. The pipeline expects the following files at sibling-level directories (`../RawData/` and `../BlindKey/` relative to the repo root).
-
-## Directory Overview
+Raw imaging and clinical data are **not included** in the repository. The pipeline expects the following files at
+`../RawData/` and `../BlindKey/` relative to the repository root (`ONH_Analysis/`).
 
 | Directory | Contents | Per session | Format |
-|-----------|----------|-------------|--------|
-| `RawData/sub-*/ses-*/pet/` | PET images and ONH masks | 4 files | NIfTI |
-| `RawData/eCRF_data/` | Clinical trial data (weight, dose) | 1 file total | CSV |
-| `RawData/Cerebellum_tacs/` | Cerebellum time-activity curves | 1 file | TSV |
-| `RawData/BloodPlasma/` | Plasma radioactivity samples | 1 file | TSV |
-| `RawData/InputFunctions/` | Combined IDIF + plasma input functions | 1 file | TSV |
-| `RawData/json_side_cars_updated/` | Corrected PET timing metadata | 1 file | JSON |
-| `BlindKey/` | Session blinding key | 1 file total | CSV |
+|---|---|---|---|
+| `RawData/sub-*/ses-*/pet/` | PET image + sidecar, two ONH masks | 3 NIfTI + 1 JSON (plus ignorable `*ScalarVolume*` files) | NIfTI, JSON |
+| `RawData/pet_manifest.csv` | provenance of the installed PET images (source, SHA-256, decay reference) | 1 file total | CSV |
+| `RawData/eCRF_data/` | REDCap export | exactly one `K8ERAPKIH22001_DATA_*.csv` | CSV |
+| `RawData/Cerebellum_tacs/` | cerebellum TAC over the static frame | 1 file | TSV |
+| `RawData/BloodPlasma/` | manual blood samples (+ JSON) | 1 TSV (JSON optional) | TSV, JSON |
+| `RawData/InputFunctions/` | aorta IDIF + plasma input function | 1 file | TSV |
+| `RawData/json_side_cars_updated/` | corrected sidecars (consistency check only) | 1 file | JSON |
+| `BlindKey/Blinding_key.csv` | session blinding key | 1 file total | CSV |
 
----
+## 1. PET image, sidecar and masks
 
-## 1. PET Images and ONH Masks
-
-**Location**: `RawData/sub-{ID}/ses-{code}/pet/`
-
-Each session directory contains four files:
+`RawData/sub-{ID}/ses-{code}/pet/`
 
 | File | Description |
-|------|-------------|
-| `sub-{ID}_ses-{code}_chunk-brain_rec-StaticMoCo_trc-18FFDG_pet.nii` | Static FDG-PET image |
-| `sub-{ID}_ses-{code}_chunk-brain_rec-StaticMoCo_trc-18FFDG_pet.json` | BIDS JSON sidecar |
-| `sub-{ID}_ses-{code}_..._pet_left_ONH_mask.nii.gz` | Left eye ONH mask (binary) |
-| `sub-{ID}_ses-{code}_..._pet_right_ONH_mask.nii.gz` | Right eye ONH mask (binary) |
+|---|---|
+| `sub-{ID}_ses-{code}_chunk-brain_rec-StaticMoCo_trc-18FFDG_pet.nii` | static 30-min FDG-PET, 384x384x249, 1 mm isotropic, Bq/mL, float32 |
+| `sub-{ID}_ses-{code}_chunk-brain_rec-StaticMoCo_trc-18FFDG_pet.json` | BIDS sidecar **adjacent to the image**; must have `"DecayCorrection": "INJECTION"`, `"ImageDecayCorrected": true`, `"Units": "Bq/mL"`, `ScanStart` (s post-injection, 600-7200) and `FrameDuration` `[1800000]` (ms, local convention) |
+| `…_pet_left_ONH_mask.nii.gz`, `…_pet_right_ONH_mask.nii.gz` | binary masks on the PET grid (same shape and affine). The `left`/`right` in the filename is the delineator's display label; anatomical side is derived by the pipeline |
 
-**PET image specifications**:
+The images are the injection-referenced BIDS export (`BIDS_20260205/raw/.../rec-StaticMoCo_chunk-1_pet.nii.gz`)
+installed under the blinded name by `Scripts/00_install_injection_corrected_pet.py`. Frame-start-referenced originals are
+archived in `RawData/_archive_START_corrected_pet/` and are rejected by the pipeline.
 
-| Parameter | Value |
-|-----------|-------|
-| Matrix | 384 x 384 x 249 |
-| Voxel size | 1 x 1 x 1 mm (isotropic) |
-| Units | Bq/mL |
-| Scanner | GE Discovery MI 5 PET/CT |
-| Reconstruction | Motion-corrected static (MoCo) |
+Masks: manually delineated on blinded PET, 230-797 voxels in the current data set.
 
-**Masks**: Binary NIfTI volumes manually delineated on blinded FDG-PET images. Typical volume range: 230-800 voxels.
+## 2. eCRF data
 
----
+`RawData/eCRF_data/K8ERAPKIH22001_DATA_*.csv` (REDCap export, 447 columns). Columns used: `subject_id`,
+`weight_kg_pet_1`, `injected_mbq_pet_1` (Baseline), `weight_kg_pet_2`, `injected_mbq_pet_2` (Followup). Decimal commas
+are accepted. Exactly one export must be present (or set `CONFIG["ecrf_filename"]`).
 
-## 2. eCRF Data
+## 3. Cerebellum TAC
 
-**Location**: `RawData/eCRF_data/`
+`sub-{ID}_ses-{Timepoint}_label-cerebellum_tacs.tsv` with columns `Frame, ROI, Mean(Bq/mL), Median(Bq/mL), Std(Bq/mL),
+Volume(voxels), FrameStart(s), FrameDuration(s), FrameCenter(s)`. Frames must be contiguous, start at `ScanStart` and
+cover the static frame (checked). Referenced to injection.
 
-| File | Description |
-|------|-------------|
-| `K8ERAPKIH22001_DATA_*.csv` | REDCap export (timestamped filename) |
+## 4. Blood samples
 
-**Columns used by pipeline**: `subject_id`, `weight_kg` (body weight at each visit), injected FDG dose (MBq). The full eCRF contains 500+ fields; the pipeline reads only SUV-relevant parameters.
+`sub-{ID}_ses-{Timepoint}_recording-manual_blood.tsv`: `time` (s post-injection), `whole_blood_radioactivity`,
+`plasma_radioactivity` (kBq/mL, decay-corrected to injection). 5 samples per session from ~16 to ~97 min; some precede
+and some follow the static frame. Empty plasma cells are skipped and flagged. Times must be unique and finite.
 
----
+## 5. Input functions
 
-## 3. Cerebellum Time-Activity Curves
+`sub-{ID}_ses-{Timepoint}_desc-IF_tacs.tsv`: `Time(s)`, `ROI` (`aorta` = image-derived whole-blood curve, 27 samples
+to ~10 min; `wbl`; `plasma`), `Radioactivity(Bq/mL)`. The pipeline uses `aorta` + `plasma`; the plasma rows equal the
+blood TSV x 1000. Non-finite values are rejected.
 
-**Location**: `RawData/Cerebellum_tacs/`
+## 6. Updated sidecars
 
-| File | Description |
-|------|-------------|
-| `sub-{ID}_ses-{Timepoint}_label-cerebellum_tacs.tsv` | Cerebellum TAC (1 per session) |
+`RawData/json_side_cars_updated/sub-{ID}_ses-{Timepoint}_trc-18FFDG_rec-StaticMoCo_chunk-1_pet.json` — used only to
+cross-check `ScanStart`, `FrameDuration` and `DecayCorrection` of the adjacent sidecar; a mismatch aborts the run.
 
-**Columns**:
+## 7. Blinding key
 
-| Column | Description |
-|--------|-------------|
-| `Frame` | Frame index |
-| `ROI` | Region label (`cerebellum`) |
-| `Mean(Bq/mL)` | Mean activity in cerebellum ROI |
-| `Median(Bq/mL)` | Median activity |
-| `Std(Bq/mL)` | Standard deviation |
-| `Volume(voxels)` | ROI volume |
-| `FrameStart(s)` | Frame start time (seconds post-injection) |
-| `FrameDuration(s)` | Frame duration (seconds) |
-| `FrameCenter(s)` | Frame center time |
+`BlindKey/Blinding_key.csv`: `participant_id`, `Session` (`Baseline`/`Followup`), `Blind.code` (5-character session
+code; the session folder is `ses-{Blind.code}`).
 
-Used for **SUVR normalization** (cerebellum mean during the static scan window).
-
----
-
-## 4. Blood Plasma Samples
-
-**Location**: `RawData/BloodPlasma/`
-
-| File | Description |
-|------|-------------|
-| `sub-{ID}_ses-{Timepoint}_recording-manual_blood.tsv` | Manual blood samples (1 per session) |
-
-**Columns**:
-
-| Column | Unit | Description |
-|--------|------|-------------|
-| `time` | seconds | Time post-injection |
-| `whole_blood_radioactivity` | kBq/mL | Whole blood activity |
-| `plasma_radioactivity` | kBq/mL | Plasma activity |
-
-Typically 4-5 samples per session drawn during the PET scan window. Used for **TPR calculation** (mean plasma activity during scan).
-
----
-
-## 5. Input Functions
-
-**Location**: `RawData/InputFunctions/`
-
-| File | Description |
-|------|-------------|
-| `sub-{ID}_ses-{Timepoint}_desc-IF_tacs.tsv` | Combined input function (1 per session) |
-
-**Columns**:
-
-| Column | Unit | Description |
-|--------|------|-------------|
-| `Time(s)` | seconds | Time post-injection |
-| `ROI` | — | Source: `aorta` (IDIF), `wbl` (whole blood), `plasma` |
-| `Radioactivity(Bq/mL)` | Bq/mL | Measured radioactivity |
-
-The input function combines an image-derived input function (IDIF) from the descending aorta (early phase, ~27 time points) with manual plasma samples (late phase, 4-5 samples). Used for **FUR calculation** (AUC from 0 to scan midpoint).
-
----
-
-## 6. PET JSON Sidecars (Updated)
-
-**Location**: `RawData/json_side_cars_updated/`
-
-| File | Description |
-|------|-------------|
-| `sub-{ID}_ses-{Timepoint}_trc-18FFDG_rec-StaticMoCo_chunk-1_pet.json` | Corrected BIDS sidecar |
-
-These are updated versions of the original PET JSON sidecars with corrected timing values. The pipeline preferentially loads these over the originals.
-
-**Fields used by pipeline**:
-
-| Field | Unit | Description |
-|-------|------|-------------|
-| `ScanStart` | seconds | Scan start time post-injection (~1800-2520 s) |
-| `FrameDuration` | milliseconds | Scan frame duration (typically 1800000 ms = 30 min) |
-
----
-
-## 7. Blinding Key
-
-**Location**: `BlindKey/`
-
-| File | Description |
-|------|-------------|
-| `Blinding_key.csv` | Maps blinded session codes to timepoints |
-
-**Columns**:
-
-| Column | Description |
-|--------|-------------|
-| `participant_id` | Subject identifier (e.g., `sub-101`) |
-| `Session` | Timepoint: `Baseline` or `Followup` |
-| `Blind.code` | Randomized 5-character session code |
-
-The pipeline uses this file to map blinded directory names (`ses-{code}`) to their actual timepoints for paired statistical analysis.
-
----
-
-## Expected Directory Tree
+## Expected tree
 
 ```
 ERAP_FDG_ONH_periodontium_analysis/
-│
 ├── RawData/
-│   ├── sub-101/
-│   │   ├── ses-xxxxx/
-│   │   │   └── pet/
-│   │   │       ├── sub-101_ses-xxxxx_..._pet.nii
-│   │   │       ├── sub-101_ses-xxxxx_..._pet.json
-│   │   │       ├── sub-101_ses-xxxxx_..._pet_left_ONH_mask.nii.gz
-│   │   │       └── sub-101_ses-xxxxx_..._pet_right_ONH_mask.nii.gz
-│   │   └── ses-yyyyy/
-│   │       └── pet/
-│   │           └── (same structure)
-│   ├── sub-102/
-│   │   └── ...
-│   │
-│   ├── eCRF_data/
-│   │   └── K8ERAPKIH22001_DATA_*.csv
-│   ├── Cerebellum_tacs/
-│   │   └── sub-{ID}_ses-{Timepoint}_label-cerebellum_tacs.tsv
-│   ├── BloodPlasma/
-│   │   └── sub-{ID}_ses-{Timepoint}_recording-manual_blood.tsv
-│   ├── InputFunctions/
-│   │   └── sub-{ID}_ses-{Timepoint}_desc-IF_tacs.tsv
-│   └── json_side_cars_updated/
-│       └── sub-{ID}_ses-{Timepoint}_trc-18FFDG_rec-StaticMoCo_chunk-1_pet.json
-│
-├── BlindKey/
-│   └── Blinding_key.csv
-│
-└── ONH_Analysis/          ← this repository
-    ├── Scripts/
-    ├── README.md
-    └── Data_Requirements.md
+│   ├── pet_manifest.csv
+│   ├── sub-101/ses-xxxxx/pet/{pet.nii, pet.json, left mask, right mask}
+│   ├── …
+│   ├── eCRF_data/K8ERAPKIH22001_DATA_*.csv
+│   ├── Cerebellum_tacs/, BloodPlasma/, InputFunctions/, json_side_cars_updated/
+│   └── _archive_START_corrected_pet/          (rejected by the pipeline)
+├── BlindKey/Blinding_key.csv
+└── ONH_Analysis/                               ← this repository
+    ├── Scripts/, README.md, RawData_Requirements.md, REVIEW_RESPONSE.md
 ```

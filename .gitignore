@@ -43,3 +43,6 @@ build/
 
 # ----- Adversarial review workspace (contains patient-image overlays) -----
 Review_adversarial/
+
+# ----- Manuscript-facing results notice (kept locally) -----
+RESULTS_UPDATE_FOR_MANUSCRIPT.md
