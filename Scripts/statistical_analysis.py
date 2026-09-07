@@ -72,12 +72,21 @@ def fmt_p(p: float) -> str:
     return "<0.001" if p < 0.001 else f"{p:.3f}"
 
 
-def paired_frames(df: pd.DataFrame, cols):
-    """Baseline/Followup frames indexed by subject for each laterality (bilateral = mean of both eyes)."""
+def paired_frames(df: pd.DataFrame, cols, log=print):
+    """Baseline/Followup frames indexed by subject for each laterality (bilateral = mean of both eyes).
+    Requires unique (subject, session, eye) keys; a bilateral value is formed only when both eyes are present."""
+    dup = df.duplicated(["subject_id", "session_unblinded", "eye"])
+    if dup.any():
+        raise RuntimeError(f"duplicate (subject, session, eye) rows: {df.loc[dup, ['subject_id', 'session_unblinded', 'eye']].values.tolist()}")
     out = {}
     for lat in LATERALITIES:
         if lat == "bilateral":
-            g = df.groupby(["subject_id", "session_unblinded"])[cols].mean().reset_index()
+            counts = df.groupby(["subject_id", "session_unblinded"])["eye"].nunique()
+            incomplete = counts[counts < 2]
+            for (s, t), n in incomplete.items():
+                log(f"SKIPPED bilateral {s}/{t}: only {n} eye(s) present")
+            complete = df.set_index(["subject_id", "session_unblinded"]).index.isin(counts[counts == 2].index)
+            g = df[complete].groupby(["subject_id", "session_unblinded"])[cols].mean().reset_index()
         else:
             g = df[df["eye"] == lat]
         b = g[g["session_unblinded"] == "Baseline"].set_index("subject_id")[cols]
@@ -89,7 +98,7 @@ def paired_frames(df: pd.DataFrame, cols):
 
 def run_paired_stats(df: pd.DataFrame, log) -> pd.DataFrame:
     cols = [c for c, _, _ in METRICS]
-    frames = paired_frames(df, cols)
+    frames = paired_frames(df, cols, log)
     rows = []
     for lat in LATERALITIES:
         b, f = frames[lat]
@@ -157,7 +166,7 @@ def correlation_analysis(df: pd.DataFrame, project_root: Path, output_dir: Path,
     fur = [("FUR_max", "FUR max"), ("FUR_peak_2mm", "FUR peak"), ("FUR_top150_mean", "FUR top150 mean"),
            ("FUR_top150_median", "FUR top150 median"), ("FUR_top150_p90", "FUR top150 p90")]
     cols = [c for c, _ in suv + fur]
-    frames = paired_frames(df, cols)
+    frames = paired_frames(df, cols, log)
     deltas = {lat: (frames[lat][1] - frames[lat][0]) for lat in LATERALITIES}
 
     rows = []
@@ -238,6 +247,9 @@ def write_readme_outputs(output_dir: Path, ancillary: dict):
 | `../QC/QC_flags_report.csv`, `../QC/QC_summary_report.txt`, `../QC/SUVpeak_visualizations/` | QC flags (structured) and per-session images | QC |
 | `../DerivedData/session_scaling_factors.csv` | per-session dose, weight, SUV scaler, cerebellum mean, plasma and IF AUCs | audit |
 | `archive_v1_as_reviewed/` | outputs as reviewed on 2026-09-06 (START-referenced PET, filename laterality) - do not use | history |
+
+**Manuscript update notice:** `../RESULTS_UPDATE_FOR_MANUSCRIPT.md` lists every superseded number, the old→new mapping
+and the sentences to change.
 
 Key facts of this run: {ancillary['n_subjects']} subjects, {ancillary['n_sessions']} sessions, {ancillary['n_eye_visits']} eye-visits;
 PET decay reference {ancillary['decay_reference']}; mask volume {ancillary['mask_volume_voxels']['min']}-{ancillary['mask_volume_voxels']['max']} voxels;

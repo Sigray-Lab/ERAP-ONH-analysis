@@ -45,14 +45,17 @@ are the reported endpoints; SUVR and TPR are computed and available in the outpu
 | TPR | (C / 1000) / mean plasma [kBq/mL] over the scan |
 | FUR | C / AUC(0 to scan midpoint) of the input function x 60 [min⁻¹] |
 
-**Decay reference.** All activities (PET, blood, IDIF, cerebellum) are referenced to injection. The pipeline aborts if a
-PET sidecar declares another reference.
+**Decay reference.** PET voxels (sidecar-verified), aorta IDIF and cerebellum TAC (from the injection-referenced dynamic
+series) are referenced to injection; manual blood samples are taken as injection-referenced per the laboratory protocol
+(written laboratory record pending). The pipeline aborts if a PET sidecar declares another reference.
 
 **Laterality.** The mask filenames carry the delineator's display-side label; the CSV column `eye` is the anatomical eye
 derived from the mask centroid in world coordinates (`mask_label_in_filename` keeps the file label).
 
-**Top-150.** 150 voxels ≈ two resolution elements at the ONH (FWHM ~5.2 mm → 74 mm³ each). Hottest-N statistics are
-monotone in the mask support, so they depend weakly on delineation; the ±1 mm sensitivity is reported in the supplement.
+**Top-150.** 150 voxels ≈ two resolution elements at the ONH (FWHM ~5.2 mm → 74 mm³ each). Hottest-N statistics depend
+on the delineation (a superset can only add hotter voxels; the size of the effect is empirical). Measured here: a
+1-voxel dilation changes the Top-150 mean by 0-4.6 % (median 0.1 %); a 1-voxel erosion leaves 26/52 masks with fewer
+than 150 voxels, where the statistic falls back to all remaining voxels (Supplementary Table S1).
 
 **Peak sphere.** 2 mm radius (33 voxels) centred on the max voxel, chosen for the ONH size. It is not the PERCIST SULpeak.
 

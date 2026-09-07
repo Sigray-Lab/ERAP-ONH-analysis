@@ -85,11 +85,17 @@ def main():
 
         a = old.get_fdata(dtype=np.float32)
         b = new.get_fdata(dtype=np.float32)
-        m = a > 100
-        ratio = b[m] / a[m]
         expected = 2 ** (new_js["ScanStart"] / F18_HALF_LIFE_S)
-        if abs(float(np.median(ratio)) - expected) > 1e-5 or not np.all(np.abs(ratio - expected) < 1e-4):
-            raise RuntimeError(f"{sub}/{tp}: ratio {np.median(ratio):.6f} != expected {expected:.6f}")
+        if not (np.all(np.isfinite(a)) and np.all(np.isfinite(b))):
+            raise RuntimeError(f"{sub}/{tp}: non-finite voxels")
+        zero = a == 0
+        if not np.all(b[zero] == 0):
+            raise RuntimeError(f"{sub}/{tp}: {int((b[zero] != 0).sum())} zero voxels became non-zero")
+        pred = a[~zero] * expected
+        if not np.all(np.abs(b[~zero] - pred) <= 1e-4 * np.abs(pred) + 1e-2):
+            bad = int((np.abs(b[~zero] - pred) > 1e-4 * np.abs(pred) + 1e-2).sum())
+            raise RuntimeError(f"{sub}/{tp}: {bad} voxels deviate from original x {expected:.6f}")
+        ratio = b[a > 100] / a[a > 100]
 
         for mask_path in glob.glob(str(pet_dir / "*mask*.nii*")):
             mk = nib.load(mask_path)

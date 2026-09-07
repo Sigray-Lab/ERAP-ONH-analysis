@@ -45,14 +45,14 @@ cover the static frame (checked). Referenced to injection.
 ## 4. Blood samples
 
 `sub-{ID}_ses-{Timepoint}_recording-manual_blood.tsv`: `time` (s post-injection), `whole_blood_radioactivity`,
-`plasma_radioactivity` (kBq/mL, decay-corrected to injection). 5 samples per session from ~16 to ~97 min; some precede
-and some follow the static frame. Empty plasma cells are skipped and flagged. Times must be unique and finite.
+`plasma_radioactivity` (kBq/mL; assumed decay-corrected to injection per the laboratory protocol - written record
+pending). 5 samples per session from 16 to 101 min; some precede and some follow the static frame. Empty plasma cells are skipped and flagged. Times must be unique and finite.
 
 ## 5. Input functions
 
 `sub-{ID}_ses-{Timepoint}_desc-IF_tacs.tsv`: `Time(s)`, `ROI` (`aorta` = image-derived whole-blood curve, 27 samples
 to ~10 min; `wbl`; `plasma`), `Radioactivity(Bq/mL)`. The pipeline uses `aorta` + `plasma`; the plasma rows equal the
-blood TSV x 1000. Non-finite values are rejected.
+blood TSV x 1000. Non-finite or negative values and duplicate times are rejected.
 
 ## 6. Updated sidecars
 

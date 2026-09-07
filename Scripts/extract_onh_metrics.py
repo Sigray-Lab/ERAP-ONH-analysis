@@ -131,6 +131,7 @@ def main():
 
     # Persist per-session data for the QC images (loaded once, reused after the loop)
     viz_jobs = []
+    input_files = set()   # every raw file read, hashed into the run manifest
 
     for subject_id in subjects:
         subject_dir = rawdata_dir / subject_id
@@ -163,6 +164,7 @@ def main():
             pet_data, pet_img = load_nifti_with_scaling(pet_file)
             voxel_dims = get_voxel_dimensions(pet_img)
             pet_sha = sha256_file(pet_file)
+            input_files.update([pet_file, pet_json_file])
             log(f"  {session_id} ({timepoint}): PET {pet_data.shape}, voxel {voxel_dims.tolist()} mm, "
                 f"decay ref {pet_timing['decay_correction']}, ScanStart {pet_timing['scan_start_s']:.0f} s, "
                 f"duration {pet_timing['scan_duration_s']:.0f} s, sha256 {pet_sha[:12]}")
@@ -191,6 +193,7 @@ def main():
             cerebellum_data = None
             tac_file = find_cerebellum_tac(rawdata_dir, subject_id, timepoint)
             if tac_file:
+                input_files.add(tac_file)
                 cerebellum_data = load_cerebellum_tac(tac_file, scan_start, pet_timing["scan_duration_s"])
                 log(f"    Cerebellum: mean={cerebellum_data['cerebellum_mean_bq_ml']:.2f} Bq/mL over {cerebellum_data['cerebellum_n_frames']} frames")
             else:
@@ -201,6 +204,7 @@ def main():
             blood_data, plasma_auc_result = None, None
             blood_tsv, blood_json = find_blood_file(rawdata_dir, subject_id, timepoint)
             if blood_tsv:
+                input_files.update([p for p in (blood_tsv, blood_json) if p])
                 blood_data = load_blood_data(blood_tsv, blood_json)
                 plasma_auc_result = calculate_plasma_auc(blood_data, scan_start, scan_end)
                 log(f"    Blood: {blood_data['n_samples']} valid samples; plasma AUC {plasma_auc_result['plasma_auc_kbq_s_ml']:.2f} kBq*s/mL, "
@@ -218,6 +222,7 @@ def main():
             fur_auc = np.nan
             if_key = (subject_id, timepoint)
             if if_key in input_function_cache:
+                input_files.add(Path(input_function_cache[if_key]["source_file"]))
                 auc_result = calculate_input_function_auc(input_function_cache[if_key], scan_midpoint_s)
                 fur_auc = auc_result["auc_0_to_midpoint_Bq_s_mL"]
                 save_processed_input_function(input_function_cache[if_key], auc_result,
@@ -251,6 +256,7 @@ def main():
                     continue
                 if "OHN" in mask_file.name:
                     log(f"    file-{label}: Note - filename contains 'OHN' typo")
+                input_files.add(mask_file)
                 mask_data, mask_img = load_nifti_with_scaling(mask_file)
                 validate_mask(mask_data, mask_img, pet_data, pet_img, f"{subject_id}/{session_id} {mask_file.name}")
                 side, centroid = mask_physical_eye(mask_data, mask_img.affine)
@@ -405,6 +411,7 @@ def main():
             "pet_manifest_sha256": sha256_file(rawdata_dir / "pet_manifest.csv") if (rawdata_dir / "pet_manifest.csv").exists() else None,
             "pet_decay_reference": sorted(df["decay_reference"].unique().tolist()),
             "n_pet_files": int(derived_df["pet_sha256"].nunique()),
+            "file_hashes": {str(p.relative_to(project_root)): sha256_file(p) for p in sorted(input_files)},
         },
         "outputs": {"metrics_csv": str(output_file), "n_rows": int(len(df)), "n_subjects": int(df["subject_id"].nunique()),
                     "qc_flags": int(len(flags_df)), "log": str(log_file)},

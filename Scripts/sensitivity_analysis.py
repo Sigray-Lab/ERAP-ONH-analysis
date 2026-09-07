@@ -27,6 +27,7 @@ from scipy import ndimage
 script_dir = Path(__file__).resolve().parent
 sys.path.insert(0, str(script_dir))
 from statistical_analysis import LATERALITIES, fmt_p, paired_analysis, paired_frames  # noqa: E402
+from extract_onh_metrics import CONFIG  # noqa: E402  (same eCRF source as the extraction)
 from utils import (calculate_input_function_auc, calculate_metrics, find_input_function_file, find_mask_file,  # noqa: E402
                    find_pet_file, get_voxel_dimensions, load_ecrf_data, load_input_function, load_nifti_with_scaling,
                    mask_physical_eye)
@@ -79,10 +80,11 @@ def main():
         v[c] = d[c] * factor
     changed = d.loc[np.abs(factor - 1) > 0.01, ["subject_id", "session_unblinded", "injected_MBq", "scanner_RadionuclideTotalDose_MBq"]].drop_duplicates()
     manifest["versions"]["scanner_dose"] = changed.to_dict("records")
-    rows += stats_for(v, "scanner_dose", f"SUV x eCRF/scanner dose; {len(changed)} sessions differ >1%")
+    rows += stats_for(v, "scanner_dose", f"SUV x (eCRF dose / scanner RadionuclideTotalDose) applied to all 26 sessions; "
+                                         f"{len(changed)} sessions differ by >1%, the others by <0.4%")
 
     # (c) sub-110 Follow-up plasma at eCRF times ---------------------------------------------------------------
-    ecrf = load_ecrf_data(rawdata_dir)
+    ecrf = load_ecrf_data(rawdata_dir, CONFIG["ecrf_filename"])
     r110 = ecrf[ecrf["subject_id"] == 110].iloc[0]
     ecrf_times = [ecrf_time_to_s(r110[f"time_blood_samp{i}_pet_2"]) for i in range(1, 6)]
     if_file = find_input_function_file(rawdata_dir, "sub-110", "Followup")
@@ -117,13 +119,16 @@ def main():
         t0, a0 = ifd["times"][ai[-1]], ifd["activities"][ai[-1]]
         t1, a1 = ifd["times"][pi[0]], ifd["activities"][pi[0]]
         lam = np.log(a0 / a1) / (t1 - t0)
-        grid = np.arange(np.ceil(t0), np.floor(t1) + 1)
-        expo = a0 * np.exp(-lam * (grid - t0))
-        chord = a0 + (a1 - a0) * (grid - t0) / (t1 - t0)
-        # replace the chord contribution on [t0, t1] (clipped at the midpoint) by the exponential
-        m = grid <= midp
-        delta = float(np.trapezoid(expo[m], grid[m]) - np.trapezoid(chord[m], grid[m])) if m.sum() > 1 else 0.0
-        new_auc = base + delta
+        # insert exponential knots (0.25 s spacing) between the last aorta and first plasma sample, then integrate
+        # with the pipeline's own routine so the bridge is the only thing that changes
+        inner = np.arange(t0 + 0.25, t1, 0.25)
+        expo = a0 * np.exp(-lam * (inner - t0))
+        alt = dict(ifd)
+        alt["times"] = np.concatenate([ifd["times"], inner]); alt["activities"] = np.concatenate([ifd["activities"], expo])
+        alt["roi"] = np.concatenate([ifd["roi"], np.array(["bridge"] * len(inner))])
+        order = np.argsort(alt["times"]); alt["times"], alt["activities"], alt["roi"] = alt["times"][order], alt["activities"][order], alt["roi"][order]
+        new_auc = calculate_input_function_auc(alt, midp)["auc_0_to_midpoint_Bq_s_mL"]
+        delta = new_auc - base
         bridge[f"{k.subject_id}/{k.session_unblinded}"] = {"gap_s": float(t1 - t0), "auc_change_pct": delta / base * 100}
         sel = (v.subject_id == k.subject_id) & (v.session_unblinded == k.session_unblinded)
         for c in ("FUR_top150_mean", "FUR_top150_median"):
@@ -164,9 +169,10 @@ def main():
                                       "n_masks_below_150": int((vi.top_n_used < 150).sum()),
                                       "top150_mean_change_pct": {"min": float(vi.top150_mean_change_pct.min()), "median": float(vi.top150_mean_change_pct.median()),
                                                                  "max": float(vi.top150_mean_change_pct.max())}}
-        rows += stats_for(v, name, f"{name}: masks {vi.voxels_modified.min()}-{vi.voxels_modified.max()} voxels, "
-                                   f"{int((vi.top_n_used < 150).sum())} masks <150 voxels, top150 mean change "
-                                   f"{vi.top150_mean_change_pct.min():+.1f}..{vi.top150_mean_change_pct.max():+.1f}%")
+        nb = int((vi.top_n_used < 150).sum())
+        rows += stats_for(v, name, f"{name.replace('_1mm', '')} = 1-voxel (6-connected, 1 mm) {'erosion' if 'erode' in name else 'dilation'}; "
+                                   f"statistic = hottest min(150, N) voxels; masks {vi.voxels_modified.min()}-{vi.voxels_modified.max()} voxels, "
+                                   f"{nb}/52 masks with N<150" + (" (mixed-definition row)" if nb else "") + (f"; top150-mean change {vi.top150_mean_change_pct.min():+.1f}..{vi.top150_mean_change_pct.max():+.1f}%" ))
 
     res = pd.DataFrame(rows)
     res.to_csv(out_dir / "sensitivity_table.csv", index=False)

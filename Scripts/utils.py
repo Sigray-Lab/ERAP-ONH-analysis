@@ -228,12 +228,13 @@ def check_updated_sidecar(pet_timing: Dict[str, Any], rawdata_dir: Path, subject
     with open(path) as f:
         ref = json.load(f)
     mismatches = []
-    if float(ref.get("ScanStart", -1)) != pet_timing["scan_start_s"]:
-        mismatches.append(f"ScanStart {pet_timing['scan_start_s']} vs updated sidecar {ref.get('ScanStart')}")
+    ref_ss = ref.get("ScanStart")
+    if ref_ss is None or not np.isfinite(float(ref_ss)) or float(ref_ss) != pet_timing["scan_start_s"]:
+        mismatches.append(f"ScanStart {pet_timing['scan_start_s']} vs updated sidecar {ref_ss}")
     ref_fd = ref.get("FrameDuration")
-    ref_fd = ref_fd[0] if isinstance(ref_fd, list) else ref_fd
-    if ref_fd is not None and abs(float(ref_fd) / 1000.0 - pet_timing["scan_duration_s"]) > 1e-6:
-        mismatches.append(f"FrameDuration {pet_timing['scan_duration_s']} s vs updated sidecar {ref_fd} ms")
+    ref_fd = ref_fd[0] if isinstance(ref_fd, list) and len(ref_fd) == 1 else (None if isinstance(ref_fd, list) else ref_fd)
+    if ref_fd is None or not np.isfinite(float(ref_fd)) or abs(float(ref_fd) / 1000.0 - pet_timing["scan_duration_s"]) > 1e-6:
+        mismatches.append(f"FrameDuration {pet_timing['scan_duration_s']} s vs updated sidecar {ref.get('FrameDuration')}")
     if ref.get("DecayCorrection") != pet_timing["decay_correction"]:
         mismatches.append(f"DecayCorrection {pet_timing['decay_correction']} vs updated sidecar {ref.get('DecayCorrection')}")
     return mismatches
@@ -380,9 +381,10 @@ def load_cerebellum_tac(tac_path: Path, scan_start_s: Optional[float] = None,
     means = df["Mean(Bq/mL)"].to_numpy(float)
     durations = df["FrameDuration(s)"].to_numpy(float)
     starts = df["FrameStart(s)"].to_numpy(float)
-    if not np.all(np.isfinite(means)) or np.any(durations <= 0):
-        raise InputError(f"{tac_path}: non-finite means or non-positive frame durations")
-    if not np.allclose(starts[1:], starts[:-1] + durations[:-1], atol=tolerance_s):
+    if len(df) == 0 or not np.all(np.isfinite(means)) or not np.all(np.isfinite(starts)) \
+            or not np.all(np.isfinite(durations)) or np.any(durations <= 0):
+        raise InputError(f"{tac_path}: empty TAC, non-finite values, or non-positive frame durations")
+    if len(df) > 1 and not np.allclose(starts[1:], starts[:-1] + durations[:-1], rtol=0, atol=tolerance_s):
         raise InputError(f"{tac_path}: frames are not contiguous")
     total = float(durations.sum())
     if scan_start_s is not None and abs(starts[0] - scan_start_s) > tolerance_s:
@@ -423,6 +425,10 @@ def load_blood_data(tsv_path: Path, json_path: Optional[Path] = None) -> Dict[st
     if not np.all(np.isfinite(times_all)) or len(np.unique(times_all)) != len(times_all):
         raise InputError(f"{tsv_path}: sample times must be finite and unique")
     valid = df["plasma_radioactivity"].notna().to_numpy()
+    if not np.all(np.isfinite(df.loc[valid, "plasma_radioactivity"].to_numpy(float))):
+        raise InputError(f"{tsv_path}: non-finite plasma activity")
+    if np.any(df.loc[valid, "plasma_radioactivity"].to_numpy(float) < 0):
+        raise InputError(f"{tsv_path}: negative plasma activity")
     result = {
         "time_s": times_all[valid],
         "plasma_kbq_ml": df.loc[valid, "plasma_radioactivity"].to_numpy(float),
@@ -514,11 +520,15 @@ def load_input_function(if_path: Path) -> Dict[str, Any]:
     sel = df[df["ROI"].isin(["aorta", "plasma"])].copy()
     n_idif = int((sel["ROI"] == "aorta").sum())
     n_plasma = int((sel["ROI"] == "plasma").sum())
+    if not np.all(np.isfinite(sel["Time(s)"].to_numpy(float))) or not np.all(np.isfinite(sel["Radioactivity(Bq/mL)"].to_numpy(float))):
+        raise InputError(f"{if_path}: non-finite time or activity in the input function")
     sel = sel[sel["Time(s)"] >= 0].sort_values("Time(s)")
     times = sel["Time(s)"].to_numpy(float)
     acts = sel["Radioactivity(Bq/mL)"].to_numpy(float)
-    if not np.all(np.isfinite(times)) or not np.all(np.isfinite(acts)):
-        raise InputError(f"{if_path}: non-finite time or activity in the input function")
+    if len(times) < 2 or not np.all(np.diff(times) > 0):
+        raise InputError(f"{if_path}: input-function times must be unique and strictly increasing (after dropping t<0)")
+    if np.any(acts < 0):
+        raise InputError(f"{if_path}: negative activity in the input function")
     if n_idif < 5:
         warnings.append(f"WARN: Only {n_idif} IDIF (aorta) samples (expected >=5)")
     if n_plasma < 2:
@@ -562,16 +572,23 @@ def save_processed_input_function(if_data: Dict[str, Any], auc_result: Dict[str,
     mid = auc_result["scan_midpoint_s"]
     grid, vals = auc_result["interpolated_times"], auc_result["interpolated_activities"]
     keep = if_data["times"] <= mid
-    rows = [{"time_s": 0.0, "activity_Bq_mL": float(vals[0]), "source": "interpolated_endpoint"}]
-    rows += [{"time_s": float(t), "activity_Bq_mL": float(a), "source": str(r)}
-             for t, a, r in zip(if_data["times"][keep], if_data["activities"][keep], if_data["roi"][keep])]
-    rows.append({"time_s": float(mid), "activity_Bq_mL": float(vals[-1]), "source": "interpolated_endpoint"})
+    obs_times = set(float(t) for t in if_data["times"][keep])
+    rows = [{"time_s": float(t), "activity_Bq_mL": float(a),
+             "source": str(r) + ("_endpoint" if float(t) in (0.0, float(mid)) else "")}
+            for t, a, r in zip(if_data["times"][keep], if_data["activities"][keep], if_data["roi"][keep])]
+    if 0.0 not in obs_times:
+        rows.append({"time_s": 0.0, "activity_Bq_mL": float(vals[0]), "source": "interpolated_endpoint"})
+    if float(mid) not in obs_times:
+        rows.append({"time_s": float(mid), "activity_Bq_mL": float(vals[-1]), "source": "interpolated_endpoint"})
     df = pd.DataFrame(rows).sort_values("time_s")
+    assert df["time_s"].is_unique
     df.attrs["auc"] = auc_result["auc_0_to_midpoint_Bq_s_mL"]
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w") as f:
         f.write(f"# AUC_0_to_midpoint_Bq_s_mL={auc_result['auc_0_to_midpoint_Bq_s_mL']:.6f}; "
-                f"scan_midpoint_s={mid}; source={if_data.get('source_file')}\n")
+                f"scan_midpoint_s={mid}; source={if_data.get('source_file')}; "
+                f"contract=linear interpolation of the knots on a 1 s grid from 0 to the midpoint, trapezoid; "
+                f"these rows are the observed knots plus endpoints, not the integration grid\n")
         df.to_csv(f, index=False)
 
 
